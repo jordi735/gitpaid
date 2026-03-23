@@ -4,7 +4,7 @@ import path from 'node:path';
 import githubRouter from './routes/github.js';
 
 const app = express();
-const PORT = process.env['PORT'] ?? 3001;
+const PORT = process.env['PORT'] ?? 3004;
 
 // Resolve public/ relative to project root (one level up from src/)
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
