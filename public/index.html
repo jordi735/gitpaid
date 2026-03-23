@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>gitpaid</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            gray: {
+              100: '#f0f6fc',
+              200: '#e6edf3',
+              300: '#c9d1d9',
+              400: '#8b949e',
+              500: '#6e7681',
+              600: '#30363d',
+              700: '#21262d',
+              800: '#161b22',
+              900: '#0d1117',
+              950: '#010409',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-gray-950 min-h-screen text-gray-100">
+
+<div class="max-w-5xl mx-auto px-4 py-12" x-data="gitpaid()">
+
+  <!-- Header -->
+  <div class="mb-8 text-center">
+    <h1 class="text-3xl font-bold text-white">gitpaid</h1>
+    <p class="text-gray-400 mt-1">Turn your commits into invoice line items</p>
+  </div>
+
+  <!-- Error banner -->
+  <div x-show="error" x-cloak class="mb-6 bg-red-950/50 border border-red-800 text-red-300 px-4 py-3 rounded-lg text-sm">
+    <span x-text="error"></span>
+    <button @click="error = ''" class="float-right font-bold text-red-400 hover:text-red-200">&times;</button>
+  </div>
+
+  <!-- Step 1: Token Input -->
+  <section x-show="step === 1" class="bg-gray-900 rounded-xl border border-gray-800 p-6">
+    <h2 class="text-lg font-semibold text-white mb-1">Connect to GitHub</h2>
+    <p class="text-sm text-gray-400 mb-4">Enter a personal access token to get started.</p>
+
+    <div class="bg-amber-950/40 border border-amber-800/50 text-amber-300 text-xs leading-relaxed px-3 py-2.5 rounded-lg mb-4 space-y-1.5">
+      <p>
+        Create a <a href="https://github.com/settings/tokens/new" target="_blank" rel="noopener" class="underline font-semibold hover:text-amber-200">classic token</a>
+        with <strong>repo</strong> and <strong>read:org</strong> scopes.
+        Fine-grained tokens won't work here &mdash; GitHub's API returns an empty org list for them.
+      </p>
+      <p class="text-amber-400/70">Your token is saved in your browser's local storage for convenience. Use "Start Over" to clear it.</p>
+    </div>
+
+    <div class="flex gap-3">
+      <input
+        type="password"
+        x-model="token"
+        placeholder="ghp_..."
+        class="flex-1 bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-500 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-transparent"
+        @keydown.enter="connect()"
+      >
+      <button
+        @click="connect()"
+        :disabled="loading || !token.trim()"
+        class="bg-white text-gray-900 px-5 py-2 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        <span x-show="!loading">Connect</span>
+        <span x-show="loading">Connecting...</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- Step 2: Date Range + Scope Selection -->
+  <section x-show="step === 2" x-cloak class="bg-gray-900 rounded-xl border border-gray-800 p-6">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <h2 class="text-lg font-semibold text-white">Select scope</h2>
+        <p class="text-sm text-gray-400">Choose date range and which sources to pull from.</p>
+      </div>
+      <button @click="reset()" class="text-xs text-gray-500 hover:text-gray-300">Start over</button>
+    </div>
+
+    <!-- Date range calendar -->
+    <div class="mb-5">
+      <div class="flex items-center justify-between mb-3">
+        <button @click="calNav(-1)" type="button" class="text-gray-400 hover:text-white px-1">&larr;</button>
+        <div class="flex-1 grid grid-cols-3 text-center text-sm font-medium text-gray-200">
+          <template x-for="m in calMonths" :key="m.key">
+            <span x-text="m.label"></span>
+          </template>
+        </div>
+        <button @click="calNav(1)" type="button" class="text-gray-400 hover:text-white px-1">&rarr;</button>
+      </div>
+      <div class="grid grid-cols-3 gap-4">
+        <template x-for="m in calMonths" :key="m.key">
+          <div class="grid grid-cols-7 gap-0">
+            <template x-for="(wd, wi) in ['M','T','W','T','F','S','S']" :key="m.key + '-w' + wi">
+              <span class="text-[10px] text-center text-gray-300 font-semibold pb-2" x-text="wd"></span>
+            </template>
+            <template x-for="day in m.days" :key="day.key">
+              <button type="button"
+                @click="day.date && calPick(day.date)"
+                :class="calDayClass(day)"
+                x-text="day.num">
+              </button>
+            </template>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Scopes -->
+    <div class="space-y-2 mb-5">
+      <label class="flex items-center gap-3 p-3 rounded-lg border border-gray-700 hover:bg-gray-800 cursor-pointer">
+        <input type="checkbox" x-model="includePersonal" class="rounded border-gray-600 bg-gray-800 text-white focus:ring-gray-500">
+        <div class="w-8 h-8 bg-gray-700 rounded-full flex items-center justify-center text-xs font-bold text-gray-300" x-text="username.charAt(0).toUpperCase()"></div>
+        <div>
+          <div class="text-sm font-medium text-gray-100">Personal repositories</div>
+          <div class="text-xs text-gray-500" x-text="username"></div>
+        </div>
+      </label>
+
+      <template x-for="org in orgs" :key="org.login">
+        <label class="flex items-center gap-3 p-3 rounded-lg border border-gray-700 hover:bg-gray-800 cursor-pointer">
+          <input type="checkbox" x-model="org.selected" class="rounded border-gray-600 bg-gray-800 text-white focus:ring-gray-500">
+          <img :src="org.avatar_url" :alt="org.login" class="w-8 h-8 rounded-full">
+          <span class="text-sm font-medium text-gray-100" x-text="org.login"></span>
+        </label>
+      </template>
+
+      <div x-show="orgs.length === 0 && !includePersonal" class="text-sm text-gray-500 text-center py-2">
+        No organizations found for this token.
+      </div>
+    </div>
+
+    <button
+      @click="fetchCommits()"
+      :disabled="loading || !endDate || (!includePersonal && !orgs.some(o => o.selected))"
+      class="w-full bg-white text-gray-900 px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
+    >
+      <span x-show="!loading">Fetch Commits</span>
+      <span x-show="loading">Fetching commits...</span>
+    </button>
+  </section>
+
+  <!-- Step 3: Repo Selection -->
+  <section x-show="step === 3" x-cloak class="bg-gray-900 rounded-xl border border-gray-800 p-6">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <h2 class="text-lg font-semibold text-white">Select repositories</h2>
+        <p class="text-sm text-gray-400" x-text="`${commits.length} commits found across ${repos.length} repositories`"></p>
+      </div>
+      <button @click="step = 2; repos = []; commits = [];" class="text-xs text-gray-500 hover:text-gray-300">Back</button>
+    </div>
+
+    <div x-show="truncated" class="bg-amber-950/40 border border-amber-800/50 text-amber-300 text-xs px-3 py-2 rounded-lg mb-4">
+      GitHub's search API returned the maximum of 1,000 results. Some commits may be missing.
+      Try narrowing the date range for complete results.
+    </div>
+
+    <!-- Select all / Deselect all -->
+    <div class="flex gap-2 mb-3">
+      <button @click="repos.forEach(r => r.selected = true)" class="text-xs text-gray-400 hover:text-white font-medium">Select all</button>
+      <span class="text-xs text-gray-600">|</span>
+      <button @click="repos.forEach(r => r.selected = false)" class="text-xs text-gray-400 hover:text-white font-medium">Deselect all</button>
+    </div>
+
+    <div class="space-y-1 max-h-80 overflow-y-auto mb-5">
+      <template x-for="repo in repos" :key="repo.name">
+        <label class="flex items-center justify-between p-2.5 rounded-lg border border-gray-700 hover:bg-gray-800 cursor-pointer">
+          <div class="flex items-center gap-2">
+            <input type="checkbox" x-model="repo.selected" class="rounded border-gray-600 bg-gray-800 text-white focus:ring-gray-500">
+            <span class="text-sm text-gray-100" x-text="repo.name"></span>
+          </div>
+          <span class="text-xs text-gray-500" x-text="`${repo.commitCount} commits`"></span>
+        </label>
+      </template>
+    </div>
+
+    <button
+      @click="generateOutput()"
+      :disabled="!repos.some(r => r.selected)"
+      class="w-full bg-white text-gray-900 px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
+    >
+      Generate Invoice Prompt
+    </button>
+  </section>
+
+  <!-- Step 4: Output -->
+  <section x-show="step === 4" x-cloak class="bg-gray-900 rounded-xl border border-gray-800 p-6">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <h2 class="text-lg font-semibold text-white">Your commit summary</h2>
+        <p class="text-sm text-gray-400">Paste into Claude or ChatGPT to generate invoice line items.</p>
+      </div>
+      <button @click="step = 3" class="text-xs text-gray-500 hover:text-gray-300">Back</button>
+    </div>
+
+    <button
+      @click="includeBody = !includeBody; generateOutput()"
+      :class="includeBody ? 'border-green-400 bg-green-500/20 text-green-300' : 'border-indigo-500 bg-indigo-500/15 text-indigo-300 hover:bg-indigo-500/25 hover:text-indigo-200'"
+      class="mb-3 px-3 py-1.5 text-sm border rounded-md transition-colors"
+    >
+      <span x-text="includeBody ? '✓ Including' : '+ Include'"></span> full commit descriptions
+    </button>
+
+    <textarea
+      readonly
+      x-ref="output"
+      x-text="output"
+      class="w-full h-[calc(100vh-28rem)] bg-gray-950 border border-gray-700 rounded-lg px-3 py-3 text-xs font-mono text-gray-300 resize-none focus:outline-none"
+    ></textarea>
+
+    <div class="flex gap-3 mt-4">
+      <button
+        @click="copyOutput()"
+        class="flex-1 bg-white text-gray-900 px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-gray-200"
+      >
+        <span x-text="copied ? 'Copied!' : 'Copy to Clipboard'"></span>
+      </button>
+      <button
+        @click="reset()"
+        class="px-5 py-2.5 rounded-lg text-sm font-medium border border-gray-700 text-gray-300 hover:bg-gray-800"
+      >
+        Start Over
+      </button>
+    </div>
+  </section>
+
+</div>
+
+<style>
+  [x-cloak] { display: none !important; }
+</style>
+
+<script>
+function gitpaid() {
+  const today = new Date().toISOString().split('T')[0];
+
+  return {
+    step: 1,
+    token: localStorage.getItem('gitpaid_token') || '',
+    username: '',
+    orgs: [],
+    includePersonal: false,
+    startDate: today,
+    endDate: today,
+    commits: [],
+    repos: [],
+    output: '',
+    loading: false,
+    error: '',
+    copied: false,
+    truncated: false,
+    includeBody: false,
+    calStart: new Date(new Date().getFullYear(), new Date().getMonth() - 2, 1),
+
+    get calMonths() {
+      const months = [];
+      const monthNames = ['January','February','March','April','May','June',
+                          'July','August','September','October','November','December'];
+      for (let i = 0; i < 3; i++) {
+        const d = new Date(this.calStart.getFullYear(), this.calStart.getMonth() + i, 1);
+        const year = d.getFullYear();
+        const month = d.getMonth();
+        const firstDay = (d.getDay() + 6) % 7; // 0=Mon
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        const days = [];
+        // Leading empty cells
+        for (let e = 0; e < firstDay; e++) {
+          days.push({ num: '', date: null, current: false, key: `${year}-${month}-e${e}` });
+        }
+        // Actual days
+        for (let day = 1; day <= daysInMonth; day++) {
+          const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          days.push({ num: day, date: dateStr, current: true, key: dateStr });
+        }
+        // Trailing empty cells to fill 42
+        while (days.length < 42) {
+          days.push({ num: '', date: null, current: false, key: `${year}-${month}-t${days.length}` });
+        }
+        months.push({
+          label: `${monthNames[month]} ${year}`,
+          key: `${year}-${month}`,
+          days,
+        });
+      }
+      return months;
+    },
+
+    calNav(delta) {
+      this.calStart = new Date(this.calStart.getFullYear(), this.calStart.getMonth() + delta, 1);
+    },
+
+    calPick(dateStr) {
+      if (!this.startDate || (this.startDate && this.endDate)) {
+        // No selection or both selected → start fresh
+        this.startDate = dateStr;
+        this.endDate = '';
+      } else {
+        // Only start selected
+        if (dateStr >= this.startDate) {
+          this.endDate = dateStr;
+        } else {
+          // Clicked before start → swap
+          this.endDate = this.startDate;
+          this.startDate = dateStr;
+        }
+      }
+    },
+
+    today: today,
+
+    calDayClass(day) {
+      const base = 'text-xs text-center py-1 rounded cursor-pointer ';
+      if (!day.date) return base + 'invisible';
+
+      const isStart = day.date === this.startDate;
+      const isEnd = day.date === this.endDate;
+      const inRange = this.startDate && this.endDate && day.date > this.startDate && day.date < this.endDate;
+
+      if (isStart || isEnd) return base + 'bg-gray-200 text-gray-900 font-semibold';
+      if (inRange) return base + 'bg-gray-700 text-gray-200';
+      if (day.date === this.today && !this.startDate && !this.endDate) return base + 'ring-1 ring-gray-500 text-gray-200';
+      return base + 'text-gray-400 hover:bg-gray-800 hover:text-white';
+    },
+
+    validateToken() {
+      const t = this.token.trim();
+      if (!t) return 'Please enter a token.';
+      if (!/^[a-zA-Z0-9_\-]+$/.test(t)) {
+        // Clear corrupted token from storage
+        localStorage.removeItem('gitpaid_token');
+        this.token = '';
+        return 'Invalid token — it contains unexpected characters. Please paste a fresh token from GitHub.';
+      }
+      return null;
+    },
+
+    async apiFetch(path) {
+      let res;
+      try {
+        res = await fetch(path, {
+          headers: { 'Authorization': `Bearer ${this.token.trim()}` },
+        });
+      } catch (err) {
+        throw new Error('Network error — could not reach the server.');
+      }
+
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(`Server returned an unexpected response (${res.status}).`);
+      }
+
+      if (!res.ok) throw new Error(data.error || `API error (${res.status})`);
+      return data;
+    },
+
+    async connect() {
+      this.loading = true;
+      this.error = '';
+      try {
+        const tokenError = this.validateToken();
+        if (tokenError) { this.error = tokenError; return; }
+
+        const [user, orgs] = await Promise.all([
+          this.apiFetch('/api/github/user'),
+          this.apiFetch('/api/github/orgs'),
+        ]);
+        this.username = user.login;
+        this.orgs = orgs.map(o => ({ ...o, selected: false }));
+        localStorage.setItem('gitpaid_token', this.token.trim());
+        this.step = 2;
+      } catch (e) {
+        this.error = e.message;
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    async fetchCommits() {
+      this.loading = true;
+      this.error = '';
+      this.truncated = false;
+      try {
+        const scopes = [];
+        if (this.includePersonal) scopes.push(`user:${this.username}`);
+        for (const org of this.orgs) {
+          if (org.selected) scopes.push(`org:${org.login}`);
+        }
+
+        const results = await Promise.all(
+          scopes.map(scope =>
+            this.apiFetch(
+              `/api/github/commits?scope=${encodeURIComponent(scope)}&start=${this.startDate}&end=${this.endDate}&username=${encodeURIComponent(this.username)}`
+            )
+          )
+        );
+
+        this.commits = results.flatMap(r => r.commits);
+        this.truncated = results.some(r => r.truncated);
+
+        // Derive repos from commits
+        const repoMap = {};
+        for (const c of this.commits) {
+          repoMap[c.repo] = (repoMap[c.repo] || 0) + 1;
+        }
+
+        this.repos = Object.entries(repoMap)
+          .map(([name, count]) => ({ name, commitCount: count, selected: true }))
+          .sort((a, b) => b.commitCount - a.commitCount);
+
+        if (this.commits.length === 0) {
+          this.error = 'No commits found for the selected scope and date range.';
+          return;
+        }
+
+        this.step = 3;
+      } catch (e) {
+        this.error = e.message;
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    generateOutput() {
+      const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+      const selectedRepos = new Set(this.repos.filter(r => r.selected).map(r => r.name));
+      const filtered = this.commits.filter(c => selectedRepos.has(c.repo));
+
+      // Group by repo
+      const grouped = {};
+      for (const c of filtered) {
+        if (!grouped[c.repo]) grouped[c.repo] = [];
+        grouped[c.repo].push(c);
+      }
+
+      let xml = `<commits author="${esc(this.username)}" start="${this.startDate}" end="${this.endDate}" total="${filtered.length}">\n`;
+
+      for (const [repo, repoCommits] of Object.entries(grouped)) {
+        xml += `  <repository name="${esc(repo)}" commits="${repoCommits.length}">\n`;
+        for (const c of repoCommits) {
+          xml += `    <commit date="${c.date}" sha="${c.sha}">\n`;
+          xml += `      <subject>${esc(c.message)}</subject>\n`;
+          if (this.includeBody && c.body) {
+            xml += `      <body>\n${esc(c.body)}\n      </body>\n`;
+          }
+          xml += `    </commit>\n`;
+        }
+        xml += `  </repository>\n`;
+      }
+
+      xml += `</commits>\n`;
+
+      this.output = xml;
+      this.step = 4;
+    },
+
+    async copyOutput() {
+      try {
+        await navigator.clipboard.writeText(this.output);
+        this.copied = true;
+        setTimeout(() => this.copied = false, 2000);
+      } catch {
+        this.error = 'Copy failed — try selecting the text manually.';
+      }
+    },
+
+    reset() {
+      this.step = 1;
+      this.token = '';
+      localStorage.removeItem('gitpaid_token');
+      this.username = '';
+      this.orgs = [];
+      this.includePersonal = false;
+      const today = new Date().toISOString().split('T')[0];
+      this.today = today;
+      this.startDate = today;
+      this.endDate = today;
+      this.commits = [];
+      this.repos = [];
+      this.output = '';
+      this.error = '';
+      this.truncated = false;
+      this.copied = false;
+      this.includeBody = false;
+      const now = new Date();
+      this.calStart = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+    },
+  };
+}
+</script>
+
+</body>
+</html>
